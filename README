@@ -1,3 +1,8 @@
+Setup: map a key in your vimrc:
+
+    :cmap <expr> <C-O> conomode#Plug()
+
+
 This is a mirror of http://www.vim.org/scripts/script.php?script_id=2388
 
 Implements a kind of Normal mode ( "Cmdline-Normal mode" ) on top of the Command line.  Purpose is similar to the cmdline-window (q:), but navigation and editing can be done in-place.  Of course the cmdline-window is much more powerful.
