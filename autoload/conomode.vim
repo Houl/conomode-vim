@@ -2,25 +2,29 @@
 " General: {{{1
 " File:		conomode.vim
 " Created:	2008 Sep 28
-" Last Change:	2012 Jan 30
-" Rev Days:	38
+" Last Change:	2017 Jun 04
+" Version:	0.9.32 (undo, nesting)
+"		reverted from (macro, undo, nesting)
+" License:      Vim License, see :h license
 " Author:	Andy Wokula <anwoku@yahoo.de>
-" Version:	0.6.1 (macro, undo)
+" Vim Version:	7.3 (older Vims may crash)
 " Credits:
 "   inspired from a vim_use thread on vi-style editing in the bash (there
 "   enabled with 'set -o vi').
 "   Subject:  command line
 "   Date:     25-09-2008
 
-" CAUTION:	This script may crash older Vims now and then!  (buggy
-"		getcmdline()?) -- fixed since Vim7.3
-
 " Description: {{{1
 "   Implements a kind of Normal mode ( "Cmdline-Normal mode" ) for the
 "   Command line.  Great fun if   :h cmdline-window   gets boring ;-)
 
+" Installation: {{{1
+" - put this script into your autoload folder
+" - in your vimrc, map CTRL-O (or any other key) as follows:
+"	:cmap <expr> <C-O> conomode#Plug()
+
 " Usage: {{{1
-" - when in Cmdline-mode, press <C-O> to enter "Commandline-Normal mode"
+" - when in Cmdline-mode, hit <C-O> to enter "Commandline-Normal mode"
 "   (the key was <F4> in older versions)
 " - mode indicator: a colon ":" at the cursor, hiding the char under it
 "   (side effect of incomplete mapping)
@@ -40,7 +44,7 @@
 "   Normal mode, <CR> - execute Cmdline, : - back to Cmdline (remove all
 "   text)
 " - Insert: o
-"   input() version of i (versus i: accepts a count, recordable)
+"   input() version of i (versus i: accepts a count)
 " - Repeating: .
 "   repeatable commands: d r c ~ o
 "   also: I i a A
@@ -48,19 +52,14 @@
 "   redo with "U" (to keep c_CTRL-R working); undo information survives mode
 "   switching; undo is unlimited
 " - Count: can be given for most commands
-" - Macros: q @
-"   q starts[/stops] recording, @ executes, no register involved
 " - Shortcuts: yy Y dd D x X cc C s S
 "   yy -> y_, Y -> y$, dd -> d_, D -> d$, x -> dl, X -> dh, cc -> c_,
 "   C -> c$, s -> cl, S -> 0d$i
-" - Misc: <C-L> - redraw the Cmdline, gX - cut undo (forget older entries)
+" - Misc: <C-L> - redraw the Cmdline, gX - cut undo (forget older entries),
+"   g= - (operator) evaluate and replace with result
 
 " Incompatibilities: (some ...) {{{1
 " - redo with "U" (instead of "<C-R>")
-" - "q" and "@" don't ask for a register, "@" while recording a macro
-"   immediately executes
-" - "o" is alternate version of "i", no "O"
-" - no "Beep" situation (yet) to interrupt macro execution
 
 " Small Differences:
 " - "e" jumps after the word, "$" jumps to EOL (after last char in the
@@ -71,13 +70,13 @@
 " - "c", "r", "~": no undo step if old and new text are equal; "i": no undo
 "   step if nothing inserted
 " - "yy" yanks characterwise
-" - "q" does not record into a register, data is stored in g:CONOMODE_RECBUF
 
 " Notes: {{{1
 " - strange: utf-8 characters are garbled by the mode indicator; press
-"   Ctrl-L to redraw
+"   Ctrl-L to redraw; (!) fixed with patch 7.3.539
 " - how to find out which keys are mapped in the mode?
-"	:ConomodemacroLocal cmap <SID>:
+"	:call conomode#Debug()
+"	:ConomodeLocal cmap <SID>:
 " - mapping <SID>:<BS> (<BS> = a key code expanding to several bytes)
 "   doesn't work; probably this is related to a known Vim bug:
 "	:h todo|/These two abbreviations don't give the same result:
@@ -85,26 +84,26 @@
 "   c_CTRL-\_e, c_CTRL-R_=, getcmdpos(), setcmdpos()
 " - ok: "3fx;;" -- do not remember the count for ";"
 " - ok: "cw{text}<CR>5." -- "5." does "5cw{text}<CR>"
+" - <C-R>= and <C-\>e cannot be used at the '=' prompt, but otherwise
+"   recursion is allowed
+" - VALIDCMDTYPE do not call a function to check getcmdtype(), it becomes
+"   annoying at the debug prompt for keys mapped with conomode#map#Cmap()
 
 " TODO: {{{1
-" - M we need a beep: when executing, if one of the recorded commands fails,
-"   the rest of the commands should not be executed
-" - M beep: or just do  :normal <C-C>  plus  feedkeys( <SID>: ) ?
+" - mark: m and `
 " ? refactor s:count1?
-" ? while recording, use input() for "i", "I", "a", "A"
 " ? recursive <F4>
-" - (non-vi) "c", "i": if the last inserted char is a parenthesis (and it is
-"   the only one), then "." will insert the corresponding paren
 " - support more registers, make '"adw' work
 " - last-position jump, ``
 " ? (non-vi) somehow enable Smartput??
-" ? (from vile) "q" in Operator-pending mode records a motion
+" -- (from vile) "q" in Operator-pending mode records a motion
 " - <F4>i{text}<F4> (or just {text}<F4>): starting with empty cmdline can't
 "   be repeated
 " - search commands "/", "?", "n", "N" for the cmd-history
 " - make ":" work like in ctmaps.vim
 " - zap to multi-byte char
 "
+" (newest last)
 " + count: [1-9][0-9]* enable zero after one non-zero
 " + count with multiplication: 2d3w = 6dw
 " + count: f{char}, F{char}; r{char}; undo; put
@@ -112,23 +111,16 @@
 " + BF compare old and new text case sensitive
 " + BF for now, disable recursive <F4>
 " + BF opend(), allow "c" on zero characters
-" + qcfx^UFoo^M@ works!! (with somes "x"es in the line)
-" + BF qc$q recorded <SID>ocondollar<CR> instead of <SID>ocon$<CR>
 " + doop_c: no default text, instead add old text to input history
 " + BF doop_c: escape chars in input string for use in mapping (?) - yes!
 " + implement "i", "I" and "A" with input(), like "c"
 " + no need longer need to type <C-U> in "c{motion}<C-U>{text}<CR>"
-" + BF undo/redo is now recorded
 " + BF doop_c, opend: c{motion} should leave the cursor after the change
-" + after playing a macro, undo the recorded commands at once.
-"   ! KISS: let "@" remember the undo-index (mac_begin); when finished with
-"   playing, remove the []s back to that index
 " + command "a": move right first
 " + continuous undo (don't break undo when switching to Cmdline-mode)
 " + multi-byte support (!): some commands moved bytewise, not characterwise
 "   (Mbyte); noch was übersehen?
 " + BF <F4>-recursion prevention did <C-R>= within <C-\>e (not allowed)
-" + BF need two kinds of escaping, s:MapEscape()
 " + remove the [count] limits (e.g. don't expand "3h" to "<Left><Left><Left>")
 "   what about  "3h" -> "<Left>2h", "50@" -> "@49@"; simple motions only
 "   ! do "<Left><Left><Left><SID>dorep", while count > 0
@@ -142,50 +134,56 @@
 " + s:getpos_* functions now return 0-based positions (1-based sux)
 " + BF: cmdl "infiles", inserting "filou" before "f" made try_continue_undo
 "   detect "oufil" as inserted part; now use cursor position to decide
-" + NF: "gX" - cut older undo states
-" + BF: <SID>:<C-R>* now recorded
+" + NF: "gX" - cut older undo states (non-vi)
+" + NF: permit nesting (!)
+" + (non-vi) "c", "i": if the last inserted char is a parenthesis (and it is
+"   the only one), then "." will insert the corresponding paren
+"   ! insert only, very simple, just see how it works; s:ModifyLastEdit()
+" + removed g:conomode_emacs_keys
+" + BF: made I, i, a, A actual commands
+" * refact s:doop and s:getpos funcs, now use dicts
+" + NF: conomode#map#Cmap()
+" + CH: "yy", "dd", "cc", "_" motion now linewise
 
 " }}}
 
-" Checks: {{{1
-if exists("loaded_conomode")
-    finish
-endif
-let loaded_conomode = 1
-
-if v:version < 700
-    echomsg "conomode: you need at least Vim 7.0"
-    finish
-endif
+" Init: {{{1
+let conomode#loaded = 1
 
 let s:cpo_sav = &cpo
 set cpo&vim
 
-if &cedit == "\<C-X>"
-    echomsg "Conomode: Please do :set cedit& (only a warning)."
-    " the user's new key for 'cedit' may come in the way
-endif
-
 " Config: {{{1
-" if non-zero, add a few keys for Cmdline-mode
-if !exists("g:conomode_emacs_keys")
-    let g:conomode_emacs_keys = 0
+
+if !exists("g:conomode_undo_maker")
+    let g:conomode_undo_maker = "conomode#undo#default#New"
 endif
 
 " Some Local Variables: {{{1
-let s:zaprev = {"f": "F", "F": "f", "t": "T", "T": "t"}
+if !exists("s:doop")
+    let s:doop = {}
+endif
+if !exists("s:getpos")
+    let s:getpos = {}
+endif
 if !exists("s:undo")
     let s:undo = {}
 endif
 if !exists("s:quitnormal")
     let s:quitnormal = 1
 endif
+if !exists("s:nested")
+    let s:nested = 0
+endif
 if !exists("s:undostore")
     let s:undostore = {}
 endif
-
-" DEBUG:
-let g:conomode_dbg_undo = s:undo
+if !exists("s:insbegin")
+    let s:insbegin = "i"
+endif
+if !exists("s:register")
+    let s:register = ''
+endif
 
 " word forward patterns:
 let s:wfpat = {
@@ -200,11 +198,9 @@ let s:wbpat = {
     \, "B": ['\S*$', '\S*\s*$', '\S*$']
     \}
 
-let s:cmdrev = {
-    \  "caret": "^", "scolon": ";", "comma": ",", "dollar": "$"
-    \, "percent": "%", "bar": "|"
-    \, "put0-1": "P", "put1-1": "p", "put00": "<C-R>*" }
+let s:stacked_vars = split('s:lastcount s:lastedit s:lastitext s:lastzap s:operator')
 
+let s:file = expand('<sfile>')
 "}}}1
 
 " Functions:
@@ -235,19 +231,19 @@ func! s:forward_word(wm, count1)
     return newcp
 endfunc
 
-func! s:getpos_w()
+func! s:getpos.w()
     return s:forward_word("w", s:count1)
 endfunc
 
-func! s:getpos_W()
+func! s:getpos.W()
     return s:forward_word("W", s:count1)
 endfunc
 
-func! s:getpos_e()
+func! s:getpos.e()
     return s:forward_word("e", s:count1)
 endfunc
 
-func! s:getpos_E()
+func! s:getpos.E()
     return s:forward_word("E", s:count1)
 endfunc
 
@@ -274,15 +270,15 @@ func! s:backward_word(wm, count1)
     return gcp
 endfunc
 
-func! s:getpos_b()
+func! s:getpos.b()
     return s:backward_word("b", s:count1)
 endfunc
 
-func! s:getpos_B()
+func! s:getpos.B()
     return s:backward_word("B", s:count1)
 endfunc
 
-func! s:getpos_h()
+func! s:getpos.h()
     " Omap mode only
     let gcp = getcmdpos()-1
     if s:count1 > gcp
@@ -298,7 +294,7 @@ func! s:getpos_h()
     return pos >= 0 ? pos : 0
 endfunc
 
-func! s:getpos_l()
+func! s:getpos.l()
     let gcp = getcmdpos()-1
     if s:count1 == 1
 	return matchend(getcmdline(), '.\|$', gcp)
@@ -312,20 +308,20 @@ func! s:getpos_l()
     endif
 endfunc
 
-func! s:getpos_dollar()
+func! s:getpos.dollar()
     return strlen(getcmdline())
 endfunc
 
-func! s:getpos_0()
+func! s:getpos.zero()
     return 0
 endfunc
 
-func! s:getpos_caret()
+func! s:getpos.caret()
     return match(getcmdline(), '\S')
 endfunc
 
 " jump to matching paren
-func! s:getpos_percent()
+func! s:getpos.percent()
     let gcp = getcmdpos()-1
     let cmdl = getcmdline()
     if cmdl[gcp] !~ '[()[\]{}]'
@@ -384,7 +380,7 @@ func! s:getpos_percent()
     return gcp
 endfunc
 
-func! s:getpos_bar()
+func! s:getpos.bar()
     let cmdl = getcmdline()
     let pos = byteidx(cmdl, s:count1-1)
     if pos == -1
@@ -394,31 +390,25 @@ func! s:getpos_bar()
     endif
 endfunc
 
+func! s:getpos.backtick()
+    let gcp = getcmdpos()-1
+    if exists("s:mark") && s:mark >= 0
+	let new_mark = s:mark
+	let s:mark = gcp
+	return new_mark
+    else
+	return gcp
+    endif
+endfunc
+
 " Getzappos: {{{1
 func! s:getzappos(zapcmd, ...)
     let cnt = s:count1
     if a:0 == 0
-	if !s:from_mapping
-	    call inputsave()
-	    let aimchar = nr2char(getchar())
-	    call inputrestore()
-	else
-	    let aimchar = nr2char(getchar())
-	endif
+	call inputsave()
+	let aimchar = nr2char(getchar())
+	call inputrestore()
 	let s:lastzap = [a:zapcmd, aimchar]
-	if s:recording
-	    " call s:rec_chars(cnt, a:zapcmd.aimchar)
-	    if s:zapmode == "n"
-		let reczap = "<C-X>&<SID>cono". a:zapcmd
-	    else
-		let reczap = "<C-X>&<SID>ocon". a:zapcmd
-	    endif
-	    if s:zapmode == "o" && s:operator == "c"
-		let s:rec_op_c = reczap."<CR>". s:MapEscape(aimchar)
-	    else
-		call s:rec_chars(cnt, reczap."<CR>". s:MapEscape(aimchar)."<SID>:")
-	    endif
-	endif
     else
 	let aimchar = a:1
     endif
@@ -461,23 +451,23 @@ func! s:getzappos(zapcmd, ...)
     return newcp
 endfunc
 
-func! s:getpos_f()
+func! s:getpos.f()
     return s:getzappos("f")
 endfunc
 
-func! s:getpos_F()
+func! s:getpos.F()
     return s:getzappos("F")
 endfunc
 
-func! s:getpos_t()
+func! s:getpos.t()
     return s:getzappos("t")
 endfunc
 
-func! s:getpos_T()
+func! s:getpos.T()
     return s:getzappos("T")
 endfunc
 
-func! s:getpos_scolon()
+func! s:getpos.scolon()
     if exists("s:lastzap")
 	return s:getzappos(s:lastzap[0], s:lastzap[1])
     else
@@ -485,9 +475,9 @@ func! s:getpos_scolon()
     endif
 endfunc
 
-func! s:getpos_comma()
+func! s:getpos.comma()
     if exists("s:lastzap")
-	return s:getzappos(s:zaprev[s:lastzap[0]], s:lastzap[1])
+	return s:getzappos(tr(s:lastzap[0],'fFtT','FfTt'), s:lastzap[1])
     else
 	return getcmdpos()-1
     endif
@@ -496,27 +486,26 @@ endfunc
 " Move: {{{1
 func! <sid>move(motion)
     let s:count1 = s:getcount1()
-    call setcmdpos(1 + s:getpos_{a:motion}())
-    call s:rec_chars(s:count1, a:motion)
+    call setcmdpos(1 + s:getpos[a:motion]())
     return ""
 endfunc
 
 func! <sid>move_zap(zapcmd)
     let s:count1 = s:getcount1()
-    let s:zapmode = "n"
     call setcmdpos(1 + s:getzappos(a:zapcmd))
     return ""
 endfunc
 
 " Put: {{{1
 func! <sid>edit_put(mode, reg, gcpoff, endoff)
+    let reg = a:reg != '' ? a:reg : (s:register != '' ? s:register : '"')
+    let s:register = ''
     let coff = a:gcpoff
     if a:mode == 1
 	" limit count to 500
 	let cnt = min([s:getcount1(),500])
-	let s:lastedit = ["edit_put", 0, a:reg, coff, a:endoff]
+	let s:lastedit = ["edit_put", 0, reg, coff, a:endoff]
 	let s:lastcount = cnt
-	call s:rec_chars(cnt, "put". a:gcpoff. a:endoff)
     else
 	let cnt = s:lastcount
     endif
@@ -526,7 +515,7 @@ func! <sid>edit_put(mode, reg, gcpoff, endoff)
 	let coff = 0
     endif
     let boff = coff==0 ? 0 : matchend(strpart(cmdl, gcp, 8), '.')
-    let ins = repeat(getreg(a:reg), cnt)
+    let ins = repeat(getreg(reg), cnt)
     if ins != ""
 	" after undoing "p", move the cursor one left from the start of the
 	" change
@@ -541,17 +530,11 @@ endfunc
 func! <sid>edit_r(mode, ...)
     if a:mode == 1
 	let cnt = s:getcount1()
-	if !s:from_mapping
-	    call inputsave()
-	    let replchar = nr2char(getchar())
-	    call inputrestore()
-	else
-	    let replchar = nr2char(getchar())
-	endif
+	call inputsave()
+	let replchar = nr2char(getchar())
+	call inputrestore()
 	let s:lastedit = ["edit_r", 0, replchar]
 	let s:lastcount = cnt
-	" we must have that damn replchar BEFORE the next <SID>:
-	call s:rec_chars(cnt, "<C-X>&<SID>conor<CR>".s:MapEscape(replchar)."<SID>:")
     else
 	let replchar = a:1
 	let cnt = s:lastcount
@@ -577,7 +560,6 @@ func! <sid>edit_tilde(mode, ...)
 	let cnt = s:getcount1()
 	let s:lastedit = ["edit_tilde", 0]
 	let s:lastcount = cnt
-	call s:rec_chars(cnt, "~")
     else
 	let cnt = s:lastcount
     endif
@@ -587,7 +569,7 @@ func! <sid>edit_tilde(mode, ...)
     if ripos >= 1
 	let mid = cmdl[gcp : ripos-1]
 	" let newmid = substitute(mid, '\(\u\)\|\(\l\)', '\l\1\u\2', 'g')
-	let newmid = substitute(mid, '\k', '\=toupper(submatch(0))==#submatch(0) ? tolower(submatch(0)) : toupper(submatch(0))', 'g')
+	let newmid = s:ToggleCase(mid)
 	if mid !=# newmid
 	    call s:undo.add(0, "d", gcp, mid)
 	    call s:undo.add(1, "i", gcp, newmid)
@@ -601,55 +583,100 @@ endfunc
 
 func! <sid>setop(op)
     let s:operator = a:op
-    let s:beep = 0
-    call s:rec_chars("", a:op)
     return ""
 endfunc
 
-func! s:doop_d(str, pos, rep)
-    let @@ = a:str
+func! s:doop.d(str, pos, regtype, rep)
+    call s:SetReg(a:str, '-', a:regtype)
     call s:undo.add(1, "d", a:pos, a:str)
     call setcmdpos(a:pos + 1)
     return ""
 endfunc
 
-func! s:doop_y(str, pos, ...)
-    let @@ = a:str
+func! s:doop.y(str, pos, regtype, ...)
+    call s:SetReg(a:str, '"', a:regtype)
     call setcmdpos(a:pos + 1)
     return a:str
 endfunc
 
-" Insert: {{{1
-func! s:doop_c(str, pos, rep)
-    if s:beep && !s:from_mapping
-	return a:str
-    endif
-    let @@ = a:str
+func! s:doop.eval(str, pos, regtype, rep)
+    call s:SetReg(a:str, '"', a:regtype)
+    call setcmdpos(a:pos + 1)
+    " tell ancompl.vim to complete functions, not commands:
+    let g:ancompl_is_expr = 1
     if !a:rep
-	if !s:from_mapping
-	    call histadd("@", a:str)
-	    call inputsave()
-	    let newtext = input("Change into:")
-	    call inputrestore()
-	else
-	    let newtext = input("", a:str)
+	let chainexpr = s:Input("(chain)=", "", "expression")
+	let s:lastchainexpr = chainexpr
+    else
+	let chainexpr = s:lastchainexpr
+    endif
+    try
+	" eval() is called outside the script
+	let evalresult = nwo#desert#Let(a:str, nwo#chain#Expr(['a:val'] + nwo#fargs#Split(chainexpr)))
+	let newtext = type(evalresult) == type("") ? evalresult : string(evalresult)
+	if a:str !=# newtext
+	    call s:undo.add(0, "d", a:pos, a:str)
+	    call s:undo.add(1, "i", a:pos, newtext)
 	endif
+	return newtext
+    catch
+	call s:Warn()
+	return a:str
+    finally
+	unlet g:ancompl_is_expr
+    endtry
+endfunc
+
+func! s:ToggleCase(str)
+    return substitute(a:str, '\k', '\=toupper(submatch(0))==#submatch(0) ? tolower(submatch(0)) : toupper(submatch(0))', 'g')
+endfunc
+
+" Insert: {{{1
+func! s:doop.c(str, pos, regtype, rep)
+    call s:SetReg(a:str, '-', a:regtype)
+    if !a:rep
+	call histadd("@", a:str)
+	let newtext = s:Input("Change into:")
 	let s:lastitext = newtext
-	if s:recording
-	    call s:rec_chars(s:count1, s:rec_op_c."<C-U>".s:MapEscape(newtext,"v")."<CR><SID>:")
-	endif
     else
 	let newtext = s:lastitext
-    endif
-    if s:beep
-	return a:str
     endif
     if a:str !=# newtext
 	call s:undo.add(0, "d", a:pos, a:str)
 	call s:undo.add(1, "i", a:pos, newtext)
     endif
     call setcmdpos(a:pos+1 + strlen(newtext))
-    return newtext 
+    return newtext
+endfunc
+
+func! <sid>insert_begin(cmd)
+    let s:insbegin = a:cmd
+    if a:cmd ==# "i"
+	return ""
+    endif
+    let cmdl = getcmdline()
+    if a:cmd ==# "I"
+	" special case: returns full cmdline
+	let gcp = 0
+	if getcmdtype() == ":"
+	    let iwhite = matchstr(cmdl, '^[ \t:]*')
+	    if iwhite != ""
+		call s:undo.add(1, "d", gcp, iwhite)
+		let cmdl = strpart(cmdl, strlen(iwhite))
+	    endif
+	endif
+	call setcmdpos(gcp+1)
+	return cmdl
+    endif
+    if a:cmd ==# "a"
+	let gcp = matchend(cmdl, '^.\=', getcmdpos()-1)
+    elseif a:cmd ==# "A"
+	let gcp = strlen(cmdl)
+    else
+	let gcp = getcmdpos()-1
+    endif
+    call setcmdpos(gcp+1)
+    return ""
 endfunc
 
 func! <sid>insert(mode, cmd)
@@ -657,44 +684,38 @@ func! <sid>insert(mode, cmd)
 	let cnt = s:getcount1()
 	let s:lastedit = ["insert", 0, a:cmd]
 	let s:lastcount = cnt
-	if !s:from_mapping
-	    call inputsave()
-	    let newtext = input(a:cmd==?"a" ? "Append:" : "Insert:")
-	    call inputrestore()
-	else
-	    let newtext = input("")
-	endif
+	let newtext = s:Input(a:cmd==?"a" ? "Append:" : "Insert:")
 	let s:lastitext = newtext
-	if s:recording
-	    call s:rec_chars(cnt, a:cmd. "<C-X>&". s:MapEscape(newtext,"v"). "<CR><SID>:")
-	    " faced a crash without <C-X>(eat) (and mapesc)
-	endif
+	call s:ModifyLastEdit(1)
     else
 	let cnt = s:lastcount
 	let newtext = s:lastitext
+	call s:ModifyLastEdit(0)	" also toggle after `.'
     endif
     let cmdl = getcmdline()
-    if newtext != "" || a:cmd ==# "I"
-	if a:cmd ==# "I"
+    if a:cmd ==# "I"
+	let gcp = 0
+	if getcmdtype() == ":"
 	    let iwhite = matchstr(cmdl, '^[ \t:]*')
-	    if iwhite == "" && newtext == ""
-		return cmdl
+	    if iwhite != ""
+		call s:undo.add(newtext=="", "d", gcp, iwhite)
+		let cmdl = strpart(cmdl, strlen(iwhite))
 	    endif
-	    let gcp = 0
-	    call s:undo.add(0, "d", gcp, iwhite)
-	    let cmdl = strpart(cmdl, strlen(iwhite))
-	elseif a:cmd ==# "a"
-	    let gcp = matchend(cmdl, '^.\=', getcmdpos()-1)
-	elseif a:cmd ==# "A"
-	    let gcp = strlen(cmdl)
-	else
-	    let gcp = getcmdpos()-1
 	endif
+    elseif a:cmd ==# "a"
+	let gcp = matchend(cmdl, '^.\=', getcmdpos()-1)
+    elseif a:cmd ==# "A"
+	let gcp = strlen(cmdl)
+    else
+	let gcp = getcmdpos()-1
+    endif
+    if newtext != ""
 	let resulttext = repeat(newtext, cnt)
-	call s:undo.add(1, "i", gcp, resulttext) 
+	call s:undo.add(1, "i", gcp, resulttext)
 	call setcmdpos(gcp+1 + strlen(resulttext))
 	return strpart(cmdl, 0, gcp). resulttext. strpart(cmdl, gcp)
     else
+	call setcmdpos(gcp+1)
 	return cmdl
     endif
 endfunc
@@ -708,21 +729,11 @@ func! <sid>opend(motion, ...)
 	let s:lastedit = ["opend", motion, 0]
 	let s:lastcount = s:count1
 	let isrep = 0
-	if s:recording
-	    if s:operator == "c"
-		" just without trailing "<SID>:"
-		let mot = get(s:cmdrev, a:motion, a:motion)
-		let s:rec_op_c = "<C-X>&<SID>ocon".mot."<CR>"
-	    else
-		call s:rec_chars(s:count1, a:motion)
-	    endif
-	endif
     elseif a:1 == 1
 	" zap motion, a:0 == 2
 	let s:count1 = s:getcount1()
 	let s:lastedit = ["opend", a:2, 0]
 	let s:lastcount = s:count1
-	let s:zapmode = "o"
 	let isrep = 0
     else " e.g. a:1 == 0
 	let s:count1 = s:lastcount
@@ -740,9 +751,11 @@ func! <sid>opend(motion, ...)
     if motion == '_'
 	" special case, text object for a line
 	let gcp = 0
-	let tarpos = s:getpos_dollar()
+	let tarpos = s:getpos.dollar()
+	let regtype = "l"
     else
-	let tarpos = s:getpos_{motion}()
+	let tarpos = s:getpos[motion]()
+	let regtype = "c"
     endif
 
     let cmdl = getcmdline()
@@ -751,14 +764,14 @@ func! <sid>opend(motion, ...)
     elseif tarpos < gcp
 	let [pos1, pos2] = [tarpos, gcp+s:incloff]
     elseif s:operator == "c"
-	" op c must accept everything to always eat ^U and ^M from rec
+	" allow changing an empty region
 	let [pos1, pos2] = [gcp, gcp+s:incloff]
     else
 	return cmdl
     endif
 
     let cmdlpart = strpart(cmdl, pos1, pos2-pos1)
-    let newpart = s:doop_{s:operator}(cmdlpart, pos1, isrep)
+    let newpart = s:doop[s:operator](cmdlpart, pos1, regtype, isrep)
 
     return strpart(cmdl,0,pos1). newpart. cmdl[pos2 :]
 endfunc
@@ -766,7 +779,6 @@ endfunc
 " Repeat: {{{1
 func! <sid>edit_dot()
     let cnt = s:getcount()
-    call s:rec_chars(cnt, ".")
     if exists("s:lastedit")
 	if cnt > 0
 	    let s:lastcount = cnt
@@ -775,62 +787,6 @@ func! <sid>edit_dot()
     else
 	return getcmdline()
     endif
-endfunc
-
-func! <sid>macro_rec()
-    let s:counta = ""
-    let s:countb = ""
-    cmap <SID>:0 <SID>zero
-    if !s:recording
-	let s:recbuf = ""
-	let s:recording = 1
-	" call s:undo.mac_begin()
-	call s:Warn("START recording")
-    else
-	" call s:undo.mac_end()
-	let s:recording = 0
-	let g:CONOMODE_RECBUF = s:recbuf
-	call s:Warn("STOP recording")
-    endif
-    return ""
-endfunc
-
-" execute macro: duplicate macro count times, size limit=1000
-func! <sid>macro_exec()
-    if s:recording
-	call s:undo.mac_end()
-	let s:recording = 0
-	let g:CONOMODE_RECBUF = s:recbuf
-    endif
-    let cnt = s:getcount1()
-    if s:recbuf != ""
-	let reclen = strlen(s:recbuf)
-	if reclen * cnt > 1000
-	    let cnt = max([1000 / reclen, 1])
-	endif
-	exec "cnoremap <script> <SID>macro_keys <SID>:".repeat(s:recbuf, cnt)
-    else
-	cnoremap <script> <SID>macro_keys <SID>:
-    endif
-    call s:undo.mac_begin()
-    let s:from_mapping = 1
-    return ""
-endfunc
-
-" special keys must be keycodes; a:1 - mode char : or ;
-" sometimes we extra-check s:recording before calling this func, sometimes
-" not
-func! s:rec_chars(count1, str)
-    if s:recording
-	let str = get(s:cmdrev, a:str, a:str)
-	let s:recbuf .= (a:count1>1 ? a:count1 : ""). str
-    endif
-endfunc
-
-func! <sid>mapoff()
-    call s:undo.mac_end()
-    let s:from_mapping = 0
-    return ""
 endfunc
 
 " Count: {{{1
@@ -880,18 +836,12 @@ func! <sid>eatcount(key)
     if a:key != "0"
 	cmap <SID>:0 <SID>zero
     endif
-    if s:recording
-	call s:rec_chars(1, a:key)
-    endif
     return ""
 endfunc
 
 " duplicate a basic motion count times
 func! <sid>repinit(key, reckey, stopcond, ...)
     let cnt = s:getcount1()*(a:0 >= 1 ? a:1 : 1)
-    if s:recording
-	call s:rec_chars("", repeat(a:reckey, cnt))
-    endif
     if cnt == 1
 	let s:rep = { "count": 0 }
 	return a:key
@@ -919,25 +869,42 @@ func! <sid>rep(SID)
     endif
 endfunc
 
-" Init: (more local variables) {{{1
+" Mark {{{1
+func! <sid>set_mark()
+    let s:mark = getcmdpos()-1
+    return ""
+endfunc
+
+" Registers {{{1
+
+func! <sid>get_regchar()
+    let chr = getchar(1) ? s:getchar() : ""
+    if chr != ""
+	let s:register = chr
+    endif
+    return ""
+endfunc
+
+func! s:getchar()
+    let chr = getchar()
+    return chr != 0 ? nr2char(chr) : chr
+endfunc
+
+" Init: (more local variables, continue undo) {{{1
 func! <sid>set_tm()
     if s:quitnormal
 	let s:tm_sav = &tm
 	set timeoutlen=60000
+	let s:nested_off = getcmdtype() == "@" ? 1 : 0
     endif
     let s:quitnormal = 0
     let s:counta = ""
     let s:countb = ""
-    call s:undo.initcmdtype()
-    call s:try_continue_undo()
-    let s:recording = 0
-    let s:recbuf = exists("g:CONOMODE_RECBUF") ? g:CONOMODE_RECBUF : ""
 
-    " started conomode from a mapping? - commands with user input (r c f)
-    " don't work, they will always query the user; but we can handle
-    " 'internal' 'mappings':
-    let s:from_mapping = 0
-    " or check getchar(1) ?
+    if s:nested == 0
+	call s:initcmdtype_for_undo()
+	call s:try_continue_undo()
+    endif
 
     cmap <SID>:0 <SID>zero
     cnoremap <script> <SID>;0 <SID>ocon0<CR><SID>:
@@ -945,114 +912,190 @@ func! <sid>set_tm()
 endfunc
 
 func! <sid>rst_tm()
-    let &tm = s:tm_sav
-    let s:quitnormal = 1
-    call s:undo.setlastcmdline(getcmdline())
-    let s:lastcmdtype = s:cmdtype
-    unlet s:cmdtype
+    if s:nested == 0
+	let &tm = s:tm_sav
+	let s:quitnormal = 1
+	let s:lastcmdline = getcmdline()
+	let s:lastcmdpos = getcmdpos()
+	let s:lastcmdtype = s:cmdtype
+	unlet s:cmdtype
+    endif
     return ""
 endfunc
 
-" a friend of s:undo; to be called *after* s:undo.initcmdtype()
-func! s:try_continue_undo()
-    if !has_key(s:undo, "lastcmdline")
+" do not call for s:nested >= 1
+func! s:initcmdtype_for_undo()
+    let s:cmdtype = tr(getcmdtype(), '?', '/')
+    if !exists("s:lastcmdtype")
+	call s:undo.init()
+	unlet! s:lastcmdline
+	unlet! s:lastcmdpos
+	return
+    elseif s:cmdtype == s:lastcmdtype
+	unlet s:lastcmdtype
 	return
     endif
-    let lastcmdl = s:undo.lastcmdline
+    let s:undostore[s:lastcmdtype] = {
+	\ 'lastcmdline': s:lastcmdline,
+	\ 'lastcmdpos': s:lastcmdpos,
+	\ 'undostate': s:undo.get_state()}
+    if has_key(s:undostore, s:cmdtype)
+	let d = s:undostore[s:cmdtype]
+	call s:undo.set_state(d.undostate)
+	let s:lastcmdline = d.lastcmdline
+	let s:lastcmdpos = d.lastcmdpos
+    else
+	call s:undo.init()
+	unlet! s:lastcmdline
+	unlet! s:lastcmdpos
+    endif
+    unlet s:lastcmdtype
+endfunc
+
+" a friend of s:undo; to be called *after* s:initcmdtype_for_undo()
+" do not call for s:nested >= 1
+func! s:try_continue_undo()
+    let inscmd = s:insbegin
+    let s:insbegin = "i"
+    if inscmd !=# "i"
+	let s:lastedit = ["insert", 0, inscmd]
+	let s:lastcount = 1
+	let s:lastitext = ""
+    endif
+    if !exists("s:lastcmdline")
+	return
+    endif
+    let lastcmdl = s:lastcmdline
     let cmdl = getcmdline()
     if cmdl ==# lastcmdl
 	return
     endif
 
-    let patL = matchlist(lastcmdl, '^\(.\)\(.*\)$')[1:2]
-
-    if empty(patL)
-	let isfinal = cmdl == ""
-	if lastcmdl != ""
-	    call s:undo.add(isfinal, "d", 0, lastcmdl)
-	endif
-	if !isfinal
+    if lastcmdl == ""
+	if cmdl != ""
 	    call s:undo.add(1, "i", 0, cmdl)
-	    " enable "." for short pieces (with arbit. limit)
+	    " enable "." for short pieces (with arbit. limit), eg don't
+	    " repeat a long cmdline revoked from the history
 	    if strlen(cmdl) <= 40
-		let s:lastedit = ["insert", 0, "i"]
+		let s:lastedit = ["insert", 0, inscmd]
 		let s:lastcount = 1
 		let s:lastitext = cmdl
+		call s:ModifyLastEdit(1)
 	    endif
 	endif
 	return
     endif
 
-    call map(patL, 'escape(v:val, ''\.*$^~['')')
-    let forw_pat = '^\C'. patL[0]. (patL[1]=="" ? "" : '\%['. patL[1]. ']')
+    let lastgcp = s:lastcmdpos - 1
+    let gcp = getcmdpos()-1
 
-    let com_prefix = matchstr(cmdl, forw_pat)
-    let lenpre = strlen(com_prefix)
-    let cmdlrest = strpart(cmdl, lenpre)
+    let lendiff = strlen(cmdl) - strlen(lastcmdl)
 
-    let lastcmdlrest = strpart(lastcmdl, lenpre)
-    if lastcmdlrest =~ '.'
-	let revlastcmdlrest = join(reverse(split(lastcmdlrest, '\m')),'')
-	let patL = matchlist(revlastcmdlrest, '^\(.\)\(.*\)$')[1:2]
-	call map(patL, 'escape(v:val, ''\.*$^~['')')
-	let back_pat = '^\C'. patL[0]. (patL[1]=="" ? "" : '\%['. patL[1]. ']')
-
-	let com_suffix = matchstr(join(reverse(split(cmdlrest, '\m')),''), back_pat)
-	let lensuf = strlen(com_suffix)
-    else
-	let com_suffix = ""
-	let lensuf = 0
+    if lendiff < 0
+	" possible deletion
+	let lendel = -lendiff
+	if strpart(lastcmdl, 0, gcp) ==# strpart(cmdl, 0, gcp)
+	    \ && strpart(lastcmdl, gcp+lendel) ==# strpart(cmdl, gcp)
+	    let deleted = strpart(lastcmdl, gcp, lendel)
+	    call s:undo.add(1, "d", gcp, deleted)
+	    let s:operator = "d"
+	    let s:lastcount = strchars(deleted)
+	    " BACKSPACEVSDEL
+	    let motion = gcp < lastgcp ? "h" : "l"
+	    let s:lastedit = ["opend", motion, 0]
+	    return
+	endif
     endif
 
-    let deleted = strpart(lastcmdl, lenpre, strlen(lastcmdl)-lensuf-lenpre)
-    let inserted = strpart(cmdl, lenpre, strlen(cmdl)-lensuf-lenpre)
-
-    let has_delete = deleted != ""
-    let has_insert = inserted != ""
-    let partial_edit = lenpre >= 1 || lensuf >= 1
-
-    if has_delete
-	call s:undo.add(!has_insert, "d", lenpre, deleted) 
-    endif
-    if has_insert
-
-	" detection is ambigious, prefer a match left from the cursor
-	let gcp = getcmdpos()-1
-	let lenins = strlen(inserted)
-	if gcp >= lenins && gcp < lenpre + lenins
-	    " length of inserted prefix / suffix
-	    let lip = gcp - lenpre
-	    let lis = lenins - lip
-	    let altins = strpart(inserted, lip, lis). strpart(inserted, 0, lip)
-	    if strpart(cmdl, gcp-lenins, lenins) ==# altins
-		let inserted = altins
-		let lenpre -= lis
-		" let lensuf += lis
+    if lendiff > 0
+	" possible insertion
+	let lenins = lendiff
+	if gcp >= lenins
+	    if strpart(lastcmdl, 0, gcp-lenins) ==# strpart(cmdl, 0, gcp-lenins)
+		\ && strpart(lastcmdl, gcp-lenins) ==# strpart(cmdl, gcp)
+		let inserted = strpart(cmdl, gcp-lenins, lenins)
+		call s:undo.add(1, "i", gcp-lenins, inserted)
+		let s:lastedit = ["insert", 0, inscmd]
+		let s:lastcount = 1
+		let s:lastitext = inserted
+		call s:ModifyLastEdit(1)
+		return
 	    endif
 	endif
+    endif
 
+    let lenlastcmdl = strlen(lastcmdl)
+    let lencmdl = strlen(cmdl)
+    let lentail = lencmdl - gcp
+    if lenlastcmdl < lentail
+	let lentail = lenlastcmdl
+	" new gcp
+	let ngcp = lencmdl - lentail
+    else
+	let ngcp = gcp
+    endif
+    if strpart(lastcmdl, lenlastcmdl-lentail) !=# strpart(cmdl, ngcp)
+	" find common suffix, move ngcp to its begin
+	let back_pat = s:PrefixPat(s:Reverse(strpart(lastcmdl, lenlastcmdl-lentail)))
+	let lensuf = strlen(matchstr(s:Reverse(strpart(cmdl, ngcp)), back_pat))
+	let ngcp = lencmdl - lensuf
+    else
+	let lensuf = lentail
+    endif
+    unlet lentail
+    " new-gcp: there is no change right from this position
+    let lastcmdlhead = strpart(lastcmdl, 0, lenlastcmdl-lensuf)
+    let cmdlhead = strpart(cmdl, 0, ngcp)
+
+    if lenlastcmdl > lensuf
+	let forw_pat = s:PrefixPat(lastcmdlhead)
+	let lenpre = strlen(matchstr(cmdlhead, forw_pat))
+    else
+	let lenpre = 0
+    endif
+
+    let deleted = strpart(lastcmdlhead, lenpre)
+    let inserted = strpart(cmdlhead, lenpre)
+    " `deleted' and `inserted' may still have a common suffix
+    " (XXX maybe exclude for undo?)
+    let has_delete = deleted != ""
+    let has_insert = inserted != ""
+
+    if has_delete
+	call s:undo.add(!has_insert, "d", lenpre, deleted)
+	if !has_insert
+	    let s:operator = "d"
+	    let s:lastcount = strchars(deleted)
+	    " BACKSPACEVSDEL
+	    let motion = gcp < lastgcp ? "h" : "l"
+	    let s:lastedit = ["opend", motion, 0]
+	endif
+    endif
+    if has_insert
 	call s:undo.add(1, "i", lenpre, inserted)
-	if partial_edit && !has_delete
-	    let s:lastedit = ["insert", 0, "i"]
+	if !has_delete
+	    let s:lastedit = ["insert", 0, inscmd]
 	    let s:lastcount = 1
 	    let s:lastitext = inserted
+	    call s:ModifyLastEdit(1)
 	endif
+    endif
+    if has_delete && has_insert
+	let s:operator = "c"
+	let s:lastcount = strchars(deleted)
+	let s:lastitext = inserted
+	let motion = gcp < lastgcp ? "h" : "l"
+	let s:lastedit = ["opend", motion, 0]
     endif
 endfunc
 
 " Undo: "{{{1
 func! <sid>undo()
-    if s:recording
-	call s:rec_chars(s:getcount1(), "u")
-    endif
-    return s:undo.do()
+    return s:undo.do(s:getcount1())
 endfunc
 
 func! <sid>redo()
-    if s:recording
-	call s:rec_chars(s:getcount1(), "U")
-    endif
-    return s:undo.redo()
+    return s:undo.redo(s:getcount1())
 endfunc
 
 " func! <sid>clru()
@@ -1061,198 +1104,217 @@ endfunc
 " endfunc
 
 func! <sid>cutundo()
-    let undo = s:undo
-    if undo.idx >= 1
-	call remove(undo.list, 0, undo.idx-1)
-	let undo.idx = 0
-    endif
+    call s:undo.cut_older()
     return ""
 endfunc
 
-func! s:undo.init()
-    let self.list = [[]]
-    let self.idx = 0
-    if has_key(self, "lastcmdline")
-	unlet self.lastcmdline
-    endif
-endfunc
+" an undo object without functionality
+func! s:NewMockUndo()
+    let obj = {}
 
-func! s:undo.initcmdtype()
-    let s:cmdtype = tr(getcmdtype(), '?', '/')
-    if !exists("s:lastcmdtype")
-	call self.init()
-	return
-    elseif s:cmdtype == s:lastcmdtype
-	unlet s:lastcmdtype
-	return
-    endif
-    let s:undostore[s:lastcmdtype] = {
-	\ "list": self.list,
-	\ "idx": self.idx,
-	\ "lastcmdline": self.lastcmdline }
-    if has_key(s:undostore, s:cmdtype)
-	call extend(self, s:undostore[s:cmdtype], "force")
-    else
-	call self.init()
-    endif
-    unlet s:lastcmdtype
-endfunc
+    func! obj.init()
+    endfunc
 
-func! s:undo.setlastcmdline(str)
-    let self.lastcmdline = a:str
-endfunc
+    func! obj.get_state()
+	return {}
+    endfunc
 
-func! s:undo.add(islast, dori, pos, str)
-    let self.idx += 1
-    call insert(self.list, [a:dori, a:pos, a:str], self.idx)
-    if a:islast
-	call self.stopseq()
-    endif
-endfunc
+    func! obj.set_state(dict)
+    endfunc
 
-func! s:undo.stopseq()
-    let self.idx += 1
-    call insert(self.list, [], self.idx)
-    if exists("self.list[self.idx+1]")
-	call remove(self.list, self.idx+1, -1)
-    endif
-endfunc
+    func! obj.add(islast, dori, pos, str)
+    endfunc
 
-func! s:undo.mac_begin()
-    let self.mac_idx = self.idx
-endfunc
+    func! obj.cut_older()
+    endfunc
 
-func! s:undo.mac_end()
-    if exists("self.mac_idx")
-	let idx = self.idx - 1
-	while idx > self.mac_idx
-	    if empty(self.list[idx])
-		call remove(self.list, idx)
-		let self.idx -= 1
-	    endif
-	    let idx -= 1
-	endwhile
-	unlet self.mac_idx
-    endif
-endfunc
+    func! obj.do(count1)
+	call s:Warn('undo not implemented')
+	return getcmdline()
+    endfunc
 
-func! s:undo.do()
-    " do undo, go backwards in the list
-    let cmdl = getcmdline()
-    let cnt = s:getcount1()
-    while cnt >= 1 && self.idx >= 1
-	let self.idx -= 1
-	let item = get(self.list, self.idx, [])
-	while !empty(item)
-	    let [type, pos, str] = item
-	    if type == "d"
-		let left = strpart(cmdl, 0, pos)
-		let right = strpart(cmdl, pos)
-		let cmdl = left. str. right
-	    elseif type == "i"
-		let left = strpart(cmdl, 0, pos)
-		let right = strpart(cmdl, pos + strlen(str))
-		let cmdl = left. right
-	    endif
-	    call setcmdpos(pos+1)
-	    let self.idx -= 1
-	    let item = get(self.list, self.idx, [])
-	endwhile
-	let cnt -= 1
-    endwhile
-    return cmdl
-endfunc
+    func! obj.redo(count1)
+	call s:Warn('redo not implemented')
+	return getcmdline()
+    endfunc
 
-func! s:undo.redo()
-    let cmdl = getcmdline()
-    let cnt = s:getcount1()
-    while cnt >= 1 && exists("self.list[self.idx+1]")
-	let self.idx += 1
-	let item = get(self.list, self.idx, [])
-	while !empty(item)
-	    let [type, pos, str] = item
-	    if type == "d"
-		let left = strpart(cmdl, 0, pos)
-		let right = strpart(cmdl, pos + strlen(str))
-		let cmdl = left. right
-	    elseif type == "i"
-		let left = strpart(cmdl, 0, pos)
-		let right = strpart(cmdl, pos)
-		let cmdl = left. str. right
-	    endif
-	    call setcmdpos(pos+1)
-	    let self.idx += 1
-	    let item = get(self.list, self.idx, [])
-	endwhile
-	let cnt -= 1
-    endwhile
-    return cmdl
+    return obj
 endfunc
 
 " Misc: {{{1
+
+func! s:CallOrFallback(func, default_func)
+    try
+	return call(a:func, [])
+    catch
+	call s:Warn()
+	return call(a:default_func, [])
+    endtry
+endfunc
+
+func! s:Input(prompt, ...)
+    let varstore = {}
+    for varname in s:stacked_vars
+	if exists(varname)
+	    let varstore[varname] = eval(varname)
+	endif
+    endfor
+    let undostore = s:undo.get_state()
+    call s:undo.init()
+    call inputsave()
+    let s:nested += 1
+    try
+	let depnum = s:nested+s:nested_off >= 2 ? "[".(s:nested+s:nested_off-1)."] " : ""
+	let newtext = call("input", [depnum. a:prompt] + a:000)
+	" let newtext = input(depnum. a:prompt, "x", 'custom,ConoUndoComplDeleted')
+	" 2012 Feb 25 completion does not work, why?
+    catch
+	call s:Warn()
+	" for now: Vim:Interrupt is like Esc, warn about errors
+	let newtext = ""
+    endtry
+    let s:nested -= 1
+    call inputrestore()
+    call s:undo.set_state(undostore)
+    for [varname, value] in items(varstore)
+	exec "let" varname "= value"
+	unlet value
+    endfor
+    return newtext
+endfunc
+
+func! s:PrefixPat(str)
+    " {str}	non-empty string
+    let ml = matchlist(a:str, '^\(.\)\(.*\)$')[1:2]
+    call map(ml, 'escape(v:val, ''\.*$^~['')')
+    if ml[1] =~ ']'
+	let ml[1] = substitute(ml[1], ']', '[]]', 'g')
+    endif
+    return '^\C'. ml[0]. (ml[1]=="" ? "" : '\%['. ml[1]. ']')
+endfunc
+
+func! s:Reverse(str)
+    return join(reverse(split(a:str, '\m')),'')
+endfunc
+
+func! s:SetReg(str, default_reg, regtype)
+    let reg = s:register != '' ? s:register : a:default_reg
+    let s:register = ''
+    try
+	" XXX How to make the unnamed register point to {reg}?
+	call setreg(reg, '')		" check if {reg} can be used
+	exec 'normal! "'. reg. 'yl'|	" workaround (we don't want this)
+					" awful when on closed fold
+	call setreg(reg, a:str, a:regtype)
+    catch
+	call s:Warn()
+    endtry
+endfunc
+
 func! s:Warn(...)
     echohl WarningMsg
     if a:0 == 0
 	redraw
-	echon matchstr(v:exception, ':\zs.*')
+	echomsg substitute(v:exception, '\C^Vim.\{-}:', '', '')
 	sleep 1
     else
-	echon a:1
+	echomsg a:1
 	exec "sleep" (a:0>=2 ? a:2 : 300)."m"
     endif
     echohl None
 endfunc
 
-let s:esctbl = {
-    \ "|": "<Bar>", "<": "<lt>", "v|": "<Bar>", "v<": "<lt>",
-    \ "\r": '<CR>', "\n": '<NL>', "\e": '<Esc>',
-    \ "v\r": '<C-V><CR>', "v\n": '<C-V><NL>', "v\e": '<C-V><Esc>'}
-let s:escpat = '[|<[:cntrl:]]'
+" experimental, after insert, modify remembered text for repeat
+func! s:ModifyLastEdit(remember)
+    " {remember}    if true, remember '\%(' vs. '\(' for next toggling of '\)'
+    if s:lastitext =~ '^\\\=%\=($'
+	if a:remember
+	    let s:optional_percent = s:lastitext =~ '%($' ? '%' : ''
+	endif
+	let s:lastitext = substitute(s:lastitext, '^.\{-}\(\\\=\)%\=($', '\1)', '')
+    elseif s:lastitext =~ '^\\\=)$'
+	let s:lastitext = substitute(s:lastitext, '^.\{-}\(\\\=\))$', '\1'. s:optional_percent. '(', '')
+    endif
+endfunc
+let s:optional_percent = ''
 
-" Two kinds of escaping:
-" "":	r|   -> r<Bar>      ,  r^M   -> r<CR>
-" "v":	c|^[ -> c<Bar><Esc> ,  c^M^[ -> c<C-V><CR><Esc>
+" API {{{1
 
-func! s:MapEscape(str, ...)
-    " a:1   "" or "v" -- two kinds of escaping
-    if a:str =~ s:escpat
-	let vp = a:0>=1 ? a:1 : ""
-	let str = substitute(a:str, s:escpat, '\=get(s:esctbl, vp. submatch(0), " O.o ")', 'g')
-	return str
+" Usage: :cmap <expr> <C-O> conomode#Plug()
+func! conomode#Plug()
+    return "\<Plug>(Conomode)"
+endfunc
+
+" for conomode#map#Cmap()
+func! conomode#Start()
+    return s:sid_conomode
+endfunc
+
+" calling this function is like typing <C-G>u in Insert mode
+func! conomode#BreakUndo()
+    if getcmdtype() != "" && s:nested == 0
+	call s:initcmdtype_for_undo()
+	call s:try_continue_undo()
+	" from <sid>rst_tm():
+	let s:lastcmdline = getcmdline()
+	let s:lastcmdpos = getcmdpos()
+	let s:lastcmdtype = s:cmdtype
+	unlet s:cmdtype
+    endif
+    return ""
+endfunc
+
+func! conomode#MakeLocalCmd()
+    com! -nargs=* -complete=command ConomodeLocal <args>
+endfunc
+
+func! conomode#DelLocalCmd()
+    delcom ConomodeLocal
+endfunc
+
+" debugging
+func! conomode#Debug(...)
+    " {a:1}	(boolean) if non-zero: enable, else: disable (default: 1)
+    if a:0==0 || a:1
+	let g:conomode_dbg_undo = s:undo
     else
-	return a:str
+	unlet! g:conomode_dbg_undo
     endif
 endfunc
 
-" func! <sid>exec(cmd)
-"     try|exec a:cmd|catch|call s:Warn()|endtry
-"     return ""
-" endfunc
+func! conomode#ReloadCmd()
+    return 'source '. fnameescape(s:file)
+endfunc
+
+"func! conomode#UndoStat()
+"    return printf('undo:%d/%d', s:undo.idx, len(s:undo.list))
+"endfunc
+
+func! conomode#SetUndo(instance)
+    if exists("s:undo.get_state")
+	call a:instance.set_state(s:undo.get_state())
+    endif
+    let s:undo = a:instance
+endfunc
+
+" this may or may not work:
+func! conomode#GetUndoList()
+    return copy(get(s:undo, 'list', [[]]))
+endfunc
 
 "}}}1
 
 " Mappings:
 " Entering: Cmdline-Normal mode {{{1
-if !hasmapto("<Plug>(Conomode)", "c")
-    cmap <C-O> <Plug>(Conomode)
-    " was <F4> in earlier versions
-endif
-
-cmap		   <Plug>(Conomode)	<SID>(Como)
-cmap     <expr>    <SID>(Como)		getcmdtype()=~'[=>@]' ? "" : "<SID>(ComoProceed)"
-cnoremap <script>  <SID>(ComoProceed)	<SID>set_tm<CR><SID>:
+cmap		   <Plug>(Conomode)	<SID>(ComoMaybe)
+cmap     <expr>    <SID>(ComoMaybe)	getcmdtype()=~"[=>]" ? "" : "<SID>(Conomode)"
+" VALIDCMDTYPE
+cnoremap <script>  <SID>(Conomode)	<SID>set_tm<CR><SID>:
 cnoremap <silent>  <SID>set_tm		<C-R>=<sid>set_tm()
 
-" Cmdline Mode Shortcuts: {{{1
-
-" FIXME <C-W> inserts "dbi" when used with input(); solution: allow for
-" recursion (keep mappings simple); problem: <C-\>e / <C-R>= can't be nested
-
-if g:conomode_emacs_keys
-    " bash-like <C-W> <C-Y> in vim command-line mode, a few Emacs shortcuts
-    cmap <C-W>  <SID>(Como)dbi
-    cmap <C-Y>  <SID>(Como)Pa
-endif
+nmap <SID> <SID>
+let s:sid_conomode = eval('"\'. maparg("<SID>"). '(Conomode)'. '"')
+nunmap <SID>
 
 " Simple Movement: h l (0) $ {{{1
 cnoremap <script>   <SID>zero	  <SID>prezero<CR><C-B><SID>:
@@ -1268,7 +1330,7 @@ cnoremap <expr><script> <SID>:j <sid>repinit("<Right>","j","$",&co)."<SID>dorep<
 cnoremap <expr><script> <SID>dorep <sid>rep("<SID>")
 " there must not be a mapping for <SID> itself
 
-" Motions: ^ f F t T ; , w b e W B E {{{1
+" Motions: ^ f F t T ; , w b e W B E ` {{{1
 cnoremap <script>   <SID>:^	<SID>cono^<CR><SID>:
 cnoremap <silent>   <SID>cono^	<C-R>=<sid>move("caret")
 cnoremap <script>   <SID>:<Bar>		<SID>cono<Bar><CR><SID>:
@@ -1303,6 +1365,9 @@ cnoremap <silent>   <SID>conoE	<C-R>=<sid>move("E")
 cnoremap <script>   <SID>:%	<SID>cono%<CR><SID>:
 cnoremap <silent>   <SID>cono%	<C-R>=<sid>move("percent")
 
+cnoremap <script>   <SID>:`	<SID>cono`<CR><SID>:
+cnoremap <silent>   <SID>cono`	<C-R>=<sid>move("backtick")
+
 "" History: k j {{{1
 "cnoremap <script>   <SID>:k	<SID>clru<Up><SID>:
 "cnoremap <script>   <SID>:j	<SID>clru<Down><SID>:
@@ -1320,18 +1385,22 @@ cmap <SID>:C	<SID>:c$
 " cmap <SID>:s	<SID>:dli   " not atomic, forgets count when repeating
 cmap <SID>:s	<SID>:cl
 cmap <SID>:S	<SID>:0d$i
+cmap <SID>:g==	<SID>:g=_
+cmap <SID>:g=g=	<SID>:g=_
 
 " Put: P p {{{1
 cnoremap <script>   <SID>:P	<SID>conoP<CR><SID>:
-cnoremap <silent>   <SID>conoP	<C-\>e<sid>edit_put(1,'"',0,-1)
+cnoremap <silent>   <SID>conoP	<C-\>e<sid>edit_put(1,'',0,-1)
 cnoremap <script>   <SID>:p	<SID>conop<CR><SID>:
-cnoremap <silent>   <SID>conop	<C-\>e<sid>edit_put(1,'"',1,-1)
+cnoremap <silent>   <SID>conop	<C-\>e<sid>edit_put(1,'',1,-1)
 
-" Operators: d y c {{{1
+" Operators: d y c g= {{{1
 cnoremap <script>   <SID>:d	<SID>conod<CR><SID>;
 cnoremap <silent>   <SID>conod	<C-R>=<sid>setop("d")
 cnoremap <script>   <SID>:y	<SID>conoy<CR><SID>;
 cnoremap <silent>   <SID>conoy	<C-R>=<sid>setop("y")
+cnoremap <script>   <SID>:g=	<SID>conog=<CR><SID>;
+cnoremap <silent>   <SID>conog=	<C-R>=<sid>setop("eval")
 
 cnoremap <script>   <SID>:c	<SID>conoc<CR><SID>;
 cnoremap <silent>   <SID>conoc	<C-R>=<sid>setop("c")
@@ -1342,13 +1411,21 @@ cnoremap <silent>   <SID>conor	<C-\>e<sid>edit_r(1)
 cnoremap <script>   <SID>:~	<SID>cono~<CR><SID>:
 cnoremap <silent>   <SID>cono~	<C-\>e<sid>edit_tilde(1)
 
-" Insert: I o a A i {{{1
-cnoremap <script>   <SID>:I	<SID>cono^<CR><SID>rst_tm<CR>
-cmap		    <SID>:i	<SID>rst_tm<SID><CR>
-cnoremap <script>   <SID>:o	<SID>conoi<CR><SID>:
-cnoremap <silent>   <SID>conoi	<C-\>e<sid>insert(1,"o")
-cnoremap <script>   <SID>:a	<Right><SID>rst_tm<CR>
-cnoremap <script>   <SID>:A	<End><SID>rst_tm<CR>
+" Insert: I a A i o {{{1
+cnoremap <script>   <SID>:I	<SID>conoI<CR><SID>rst_tm<CR>
+cnoremap <silent>   <SID>conoI	<C-\>e<sid>insert_begin("I")
+cnoremap <script>   <SID>:i	<SID>conoi<CR><SID>rst_tm<CR>
+cnoremap <silent>   <SID>conoi	<C-R>=<sid>insert_begin("i")
+cnoremap <script>   <SID>:a	<SID>conoa<CR><SID>rst_tm<CR>
+cnoremap <silent>   <SID>conoa	<C-R>=<sid>insert_begin("a")
+cnoremap <script>   <SID>:A	<SID>conoA<CR><SID>rst_tm<CR>
+cnoremap <silent>   <SID>conoA	<C-R>=<sid>insert_begin("A")
+
+" XXX R{text}<C-O>[count]. misbehaving, works like [count]cl{text}<CR>
+cnoremap <script>   <SID>:R	<SID>conoi<CR><SID>rst_tm<CR><Insert>
+
+cnoremap <script>   <SID>:o	<SID>conoo<CR><SID>:
+cnoremap <silent>   <SID>conoo	<C-\>e<sid>insert(1,"o")
 
 " Undo: u U {{{1
 cnoremap <script>   <SID>:u	<SID>conou<CR><SID>:
@@ -1356,21 +1433,9 @@ cnoremap <silent>   <SID>conou	<C-\>e<sid>undo()
 cnoremap <script>   <SID>:U	<SID>conoU<CR><SID>:
 cnoremap <silent>   <SID>conoU	<C-\>e<sid>redo()
 
-" Repeating: . q Q @ {{{1
+" Repeating: . {{{1
 cnoremap <script>   <SID>:.	<SID>cono.<CR><SID>:
 cnoremap <silent>   <SID>cono.	<C-\>e<sid>edit_dot()
-cnoremap <script>   <SID>:q	<SID>conoq<CR><SID>:
-cnoremap <silent>   <SID>conoq	<C-R>=<sid>macro_rec()
-cmap		    <SID>:@	<SID>cono@a<SID>macro_keys<C-X>(mapoff)<SID>cono@b
-cnoremap <silent>   <SID>cono@a	<C-R>=<sid>macro_exec()<CR>
-cnoremap <silent>   <SID>:<C-X>(mapoff)	<C-R>=<sid>mapoff()
-cnoremap <script>   <SID>cono@b	<CR><SID>:
-" <C-X>(eat) changed into &
-cnoremap	    <SID>:<C-X>&  <Nop>
-cnoremap	    <SID>;<C-X>&  <Nop>
-" same bug as with '<SID>:<BS>': '<SID>:<C-X>(mapoff)' works, but
-" '<SID>:<SID>mapoff' not; this workaround is dirty: <C-X>& typed by the
-" user bypasses cleanup
 
 " Count: 1 2 3 4 5 6 7 8 9 (0) {{{1
 cnoremap <silent>   <SID>cono0	<C-R>=<sid>counta("0")
@@ -1393,6 +1458,15 @@ cnoremap <silent>   <SID>cono8	<C-R>=<sid>counta("8")
 cnoremap <script>   <SID>:9	<SID>cono9<CR><SID>:
 cnoremap <silent>   <SID>cono9	<C-R>=<sid>counta("9")
 
+" Mark: m {{{1
+cnoremap <script>   <SID>:m	<SID>conom<CR><SID>:
+cnoremap <silent>   <SID>conom	<C-R>=<sid>set_mark()
+
+" Register: " "{{{1
+cmap		    <SID>:"	<SID>"
+cmap		    <SID>"<Esc>	<SID>:
+cmap <expr>	    <SID>"	<sid>get_regchar(). '<SID>:'
+
 " Omap Motions: h l w W b B e E $ ^ {{{1
 cnoremap <script>   <SID>;h	<SID>oconh<CR><SID>:
 cnoremap <silent>   <SID>oconh	<C-\>e<sid>opend("h")
@@ -1412,7 +1486,7 @@ cnoremap <script>   <SID>;E	<SID>oconE<CR><SID>:
 cnoremap <silent>   <SID>oconE	<C-\>e<sid>opend("E")
 cnoremap <script>   <SID>;$	<SID>ocon$<CR><SID>:
 cnoremap <silent>   <SID>ocon$	<C-\>e<sid>opend("dollar")
-cnoremap <silent>   <SID>ocon0	<C-\>e<sid>opend("0")
+cnoremap <silent>   <SID>ocon0	<C-\>e<sid>opend("zero")
 cnoremap <script>   <SID>;^	<SID>ocon^<CR><SID>:
 cnoremap <silent>   <SID>ocon^	<C-\>e<sid>opend("caret")
 cnoremap <script>   <SID>;<Bar>		<SID>ocon<Bar><CR><SID>:
@@ -1424,6 +1498,9 @@ cnoremap <silent>   <SID>ocon%	<C-\>e<sid>opend("percent")
 " special case
 cnoremap <script>   <SID>;_	<SID>ocon_<CR><SID>:
 cnoremap <silent>   <SID>ocon_	<C-\>e<sid>opend("_")
+
+cnoremap <script>   <SID>;`	<SID>ocon`<CR><SID>:
+cnoremap <silent>   <SID>ocon`	<C-\>e<sid>opend("backtick")
 
 " Omap count: 1 2 3 4 5 6 7 8 9 (0) {{{1
 cnoremap <silent>   <SID>ocnt0	<C-R>=<sid>countb("0")
@@ -1461,40 +1538,48 @@ cnoremap <script>   <SID>;,	<SID>ocon,<CR><SID>:
 cnoremap <silent>   <SID>ocon,	<C-\>e<sid>opend("comma")
 
 " Goodies: c_CTRL-R_*, ^L {{{1
-" non-vi, with undo, count, dot-repeat, recording
-cnoremap <script>   <SID>:<C-R>	<SID>"
-cnoremap <script>   <SID>"*	<SID>CtlR*<CR><SID>:
-cnoremap <silent>   <SID>CtlR*	<C-\>e<sid>edit_put(1,"*",0,0)
-cmap		    <SID>"	<SID>rst_tm<SID><CR><C-R>
+" non-vi, with undo, count, dot-repeat
+cnoremap <script>   <SID>:<C-R>	<SID>cr"
+cnoremap <script>   <SID>cr"*	<SID>CtlR*<CR><SID>:
+cnoremap <silent>   <SID>CtlR*	<C-\>e<sid>edit_put(1,'*',0,0)
+cmap		    <SID>cr"	<SID>rst_tm<SID><CR><C-R>
 
-" cnorem <script>   <SID>:<C-L>	<C-R>=<sid>exec("redraw")<CR><SID>:
 cnoremap <script>   <SID>:<C-L>	<Space><C-H><SID>:
 
 cnoremap <script>   <SID>:gX	<C-R>=<sid>cutundo()<CR><SID>:
 
 " Mode Switching: {{{1
-" From Cmdline-Normal mode 
-" to Cmdline mode (start over)
-cmap		    <SID>::	<SID>:dd<C-X>&<SID>rst_tm<SID><CR>
+cmap		    <SID>::	<SID>:ddi
 
 " no map for "<SID>:<Esc>" makes <Esc> return to Normal mode immediately
-" cmap		    <SID>:<CR>	<SID>rst_tm<SID><CR><CR>
 
-" to Cmdline mode (key not mapped -> make <SID>: do nothing)
 cnoremap <script>   <SID>:	<SID>rst_tm<CR>
 cnoremap <silent>   <SID>rst_tm <C-R>=<sid>rst_tm()
 cnoremap	    <SID><CR>	<CR>
 
-" Cmdline-Omap mode to Cmdline-Normal mode (implicit)
 cmap		    <SID>;	<SID>:
-" maybe:
 cmap		    <SID>;<Esc> <SID>:
 
 "}}}1
 
-" DEBUG:
-com! -nargs=* -complete=command ConomodeLocal <args>
+" Init: {{{
+try
+    call conomode#SetUndo(s:CallOrFallback(g:conomode_undo_maker, 's:NewMockUndo'))
+
+    " Source Hook:
+    if exists('g:conomode_source_hook')
+	try
+	    call nwo#gobi#Invoke(g:conomode_source_hook)
+	catch
+	    call s:Warn()
+	endtry
+    endif
+
+finally
+    let &cpo = s:cpo_sav
+endtry
+
+"}}}
 
 " Modeline: {{{1
-let &cpo = s:cpo_sav
 " vim:set ts=8 sts=4 sw=4 fdm=marker:
